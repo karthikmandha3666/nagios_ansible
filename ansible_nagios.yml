@@ -1,0 +1,131 @@
+---
+- hosts: all
+  vars: 
+    nagios_version: '4.4.5'
+    nagios_plugin_version: '2.2.1'
+    package_redhat: CentOS
+    package_centos_modules:
+      - httpd
+      - gcc
+      - glibc
+      - glibc-common
+      - wget
+      - unzip
+      - epel-release
+      - php
+      - gd
+      - gd-devel
+      - perl
+      - net-snmp-utils
+      - postfix
+      - make
+      - snmp 
+      - libnet-snmp-perl 
+      - gettext
+      - automake
+      - autoconf
+      - openssl-devel
+      - net-snmp
+      - python3-pip
+    nagios_code_location: /tmp/nagioscore.tar.gz
+    nagios_plugin_location: /tmp/nagios-plugins.tar.gz
+  become: yes
+  
+  tasks: 
+    - name: fail on unsupported platforms   
+      fail:
+        msg: This playbook only runs on {{ package_redhat }}
+      when: ansible_os_family != 'RedHat'
+    - name: installing packages for {{ package_redhat }} # installing packages using variables
+      yum:
+        name: "{{ item }}"
+        update_cache: yes
+        state: present
+      loop: "{{ package_centos_modules }}"
+      tags:
+        - nagios
+    - name: downloading nagioscore # Downloading zip file form source
+      get_url:
+        dest:  /tmp/nagioscore.tar.gz
+        url:  https://github.com/NagiosEnterprises/nagioscore/archive/nagios-4.4.5.tar.gz
+        mode: u+x,g+x,o+x
+    - name: unzipping file i.e "nagioscore.tar.gz"
+      unarchive:
+        src: /tmp/nagioscore.tar.gz
+        dest: "/tmp/"
+        remote_src: yes
+        
+    - name: compiling Code
+      shell: 
+        cmd: sudo ./configure > configure.log && sudo make all > makeoutput.log
+      args: 
+        chdir: /tmp/nagioscore-nagios-4.4.5/
+    - name: Creating Users and Groups 
+      shell:
+        cmd: sudo make install-groups-users > install-groups.log && sudo usermod -a -G nagios apache > user_mod.log
+      args:
+        chdir: /tmp/nagioscore-nagios-4.4.5/
+    - name: install Binaries
+      shell: 
+        cmd: sudo make install > make_install.log
+      args:
+        chdir: /tmp/nagioscore-nagios-4.4.5/
+    - name: install service / Deamon
+      shell:
+        cmd: sudo make install-daemoninit > deamoninit.log && sudo systemctl enable httpd.service
+      args:
+        chdir: /tmp/nagioscore-nagios-4.4.5/
+    - name: install command mode
+      shell:
+        cmd: sudo make install-commandmode > commandmode.log
+      args:
+        chdir: /tmp/nagioscore-nagios-4.4.5/
+    - name: Install Configuration Files
+      shell:
+        cmd: sudo make install-config > config.log
+      args: 
+        chdir: /tmp/nagioscore-nagios-4.4.5/
+    - name: Installing apache Config Files
+      shell: sudo make install-webconf > webconf.log
+      args:
+        chdir: /tmp/nagioscore-nagios-4.4.5/
+    - name: Install latest passlib with pip
+      pip: name=passlib
+    - name: Create Nagiosadmin User Account
+      htpasswd:
+          path: /usr/local/nagios/etc/htpasswd.users
+          name: nagiosadmin
+          password: nagiosadmin
+      notify:
+        - restart httpd_server 
+        - restart nagios
+    
+    - name: Downloading the Nagios plugins ".tar.gz" file
+      get_url:
+        dest: /tmp/nagios-plugins.tar.gz
+        url: https://github.com/nagios-plugins/nagios-plugins/archive/release-2.2.1.tar.gz
+        mode: u+x,g+x,o+x
+    - name: unzipping the ".tar.gz" file
+      unarchive:
+        src: /tmp/nagios-plugins.tar.gz
+        dest: "/tmp/"
+        remote_src: yes
+    - name: Compile and Install
+      shell:
+        cmd: sudo ./tools/setup > setup.log && sudo ./configure > configure.log && sudo make > make.log && make install > makeinstall.log
+      args:
+        chdir: /tmp/nagios-plugins-release-2.2.1/
+      notify: 
+        - restart httpd_server 
+        - restart nagios
+  handlers:
+    - name: restart httpd_server 
+      service:
+        name: "{{ package_name }}"
+        state: restarted
+        enabled: yes 
+    - name: restart nagios 
+      service:
+        name: nagios services
+        state: restarted
+        enabled: yes
